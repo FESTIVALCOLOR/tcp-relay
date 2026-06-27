@@ -43,7 +43,7 @@ jobs:
                   "NumVpnSessions","Uptime","TotalUsers","TotalTraffic","LogType",
                   "Operator","Message","OpenVPN_ConfigData"]
 
-          def parse(lines, countries):
+          def parse_servers(lines, countries, tcp_only=False):
               out = []
               for row in csv.reader(lines[hi+1:]):
                   if len(row) < 15 or not row[14].strip(): continue
@@ -51,41 +51,45 @@ jobs:
                       s = dict(zip(cols, row))
                       s["Score"] = int(s["Score"]) if s["Score"].isdigit() else 0
                       s["Ping"]  = int(s["Ping"])  if s["Ping"].isdigit()  else 9999
-                      if s["CountryShort"] in countries and s["Score"] > 100 and s["Ping"] < 400:
-                          out.append(s)
+                      if s["CountryShort"] not in countries: continue
+                      if s["Score"] < 100 or s["Ping"] > 400: continue
+                      raw = base64.b64decode(s["OpenVPN_ConfigData"]).decode("utf-8", errors="ignore")
+                      s["_raw"] = raw
+                      s["_is_tcp"] = "proto tcp" in raw.lower()
+                      if tcp_only and not s["_is_tcp"]: continue
+                      out.append(s)
                   except:
                       continue
               return out
 
-          servers = parse(lines, EU_COUNTRIES) or parse(lines, ANY_GOOD)
+          # Priority: TCP servers in EU → any TCP → UDP in EU → UDP anywhere
+          servers = (
+              parse_servers(lines, EU_COUNTRIES, tcp_only=True) or
+              parse_servers(lines, EU_COUNTRIES + ANY_GOOD, tcp_only=True) or
+              parse_servers(lines, EU_COUNTRIES) or
+              parse_servers(lines, ANY_GOOD)
+          )
           if not servers:
               print("ERROR: no suitable server found"); sys.exit(1)
 
           servers.sort(key=lambda s: s["Score"], reverse=True)
           server = random.choice(servers[:5])
+          is_tcp = server.get("_is_tcp", False)
           print(f"Selected: {server['HostName']} ({server['CountryLong']}) "
-                f"score={server['Score']} ping={server['Ping']}ms ip={server['IP']}")
+                f"score={server['Score']} ping={server['Ping']}ms ip={server['IP']} "
+                f"proto={'tcp' if is_tcp else 'udp'}")
 
-          raw = base64.b64decode(server["OpenVPN_ConfigData"]).decode("utf-8", errors="ignore")
+          raw = server["_raw"]
 
-          # SoftEther/VPN Gate servers listen on TCP 443 — switch to TCP to bypass
-          # Timeweb's UDP VPN blocking (same issue as WireGuard: UDP sent, never received)
           filtered = []
           for line in raw.split("\n"):
               sl = line.strip().lower()
               if "redirect-gateway" in sl: continue
               if "script-security" in sl: continue
               if ("up " in sl or "down " in sl) and "resolv" in sl: continue
-              if sl.startswith("proto "): continue          # drop original proto line
-              if sl.startswith("remote ") and len(line.split()) >= 3: continue  # drop remote with port
               filtered.append(line)
 
-          server_ip = server["IP"]
           extra = [
-              "",
-              "# === Force TCP 443 (UDP blocked by Timeweb) ===",
-              "proto tcp-client",
-              f"remote {server_ip} 443",
               "",
               "# === Telegram split-tunnel (auto-generated) ===",
               "route-nopull",
