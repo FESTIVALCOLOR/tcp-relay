@@ -1,0 +1,116 @@
+name: Update VPN Gate Config
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and pick best EU server
+        run: |
+          python3 << 'PYEOF'
+          import urllib.request, base64, csv, random, sys
+
+          VPNGATE_URL  = "https://www.vpngate.net/api/iphone/"
+          EU_COUNTRIES = ["NL","DE","SE","NO","FI","DK","CH","FR","AT","BE","PL","CZ","RO"]
+          ANY_GOOD     = ["JP","KR","CA","AU","US","SG"]
+          TELEGRAM_ROUTES = [
+              ("149.154.0.0", "255.255.0.0"),
+              ("91.108.0.0",  "255.255.0.0"),
+              ("91.105.192.0","255.255.254.0"),
+              ("185.76.151.0","255.255.255.0"),
+          ]
+
+          print("Fetching VPN Gate list...")
+          req = urllib.request.Request(VPNGATE_URL, headers={"User-Agent":"Mozilla/5.0"})
+          with urllib.request.urlopen(req, timeout=60) as r:
+              data = r.read().decode("utf-8", errors="ignore")
+
+          lines = data.replace("\r\n","\n").replace("\r","\n").split("\n")
+          hi = next((i for i,l in enumerate(lines) if l.startswith("#HostName")), None)
+          if hi is None:
+              print("ERROR: could not find header"); sys.exit(1)
+
+          cols = ["HostName","IP","Score","Ping","Speed","CountryLong","CountryShort",
+                  "NumVpnSessions","Uptime","TotalUsers","TotalTraffic","LogType",
+                  "Operator","Message","OpenVPN_ConfigData"]
+
+          def parse(lines, countries):
+              out = []
+              for row in csv.reader(lines[hi+1:]):
+                  if len(row) < 15 or not row[14].strip(): continue
+                  try:
+                      s = dict(zip(cols, row))
+                      s["Score"] = int(s["Score"]) if s["Score"].isdigit() else 0
+                      s["Ping"]  = int(s["Ping"])  if s["Ping"].isdigit()  else 9999
+                      if s["CountryShort"] in countries and s["Score"] > 100 and s["Ping"] < 400:
+                          out.append(s)
+                  except:
+                      continue
+              return out
+
+          servers = parse(lines, EU_COUNTRIES) or parse(lines, ANY_GOOD)
+          if not servers:
+              print("ERROR: no suitable server found"); sys.exit(1)
+
+          servers.sort(key=lambda s: s["Score"], reverse=True)
+          server = random.choice(servers[:5])
+          print(f"Selected: {server['HostName']} ({server['CountryLong']}) "
+                f"score={server['Score']} ping={server['Ping']}ms ip={server['IP']}")
+
+          raw = base64.b64decode(server["OpenVPN_ConfigData"]).decode("utf-8", errors="ignore")
+
+          filtered = []
+          for line in raw.split("\n"):
+              sl = line.strip().lower()
+              if "redirect-gateway" in sl: continue
+              if "script-security" in sl: continue
+              if ("up " in sl or "down " in sl) and "resolv" in sl: continue
+              filtered.append(line)
+
+          extra = [
+              "",
+              "# === Telegram split-tunnel (auto-generated) ===",
+              "route-nopull",
+              "auth-user-pass /etc/openvpn/vpngate-auth.txt",
+              "script-security 0",
+          ]
+          for net, mask in TELEGRAM_ROUTES:
+              extra.append(f"route {net} {mask} vpn_gateway")
+
+          config = "\n".join(filtered) + "\n" + "\n".join(extra) + "\n"
+
+          with open("vpngate-config.ovpn", "w") as f:
+              f.write(config)
+
+          with open("vpngate-info.txt", "w") as f:
+              f.write(f"Server:  {server['HostName']}\n")
+              f.write(f"Country: {server['CountryLong']}\n")
+              f.write(f"IP:      {server['IP']}\n")
+              f.write(f"Score:   {server['Score']}\n")
+              f.write(f"Ping:    {server['Ping']}ms\n")
+
+          print("Done.")
+          PYEOF
+
+      - name: Commit config
+        run: |
+          git config user.name  "vpngate-bot"
+          git config user.email "bot@noreply.local"
+          git add vpngate-config.ovpn vpngate-info.txt
+          if git diff --cached --quiet; then
+            echo "No changes — same server still optimal"
+          else
+            COUNTRY=$(grep Country vpngate-info.txt | awk '{print $2}')
+            DATE=$(date -u +%Y-%m-%d)
+            git commit -m "vpngate: ${DATE} ${COUNTRY}"
+            git push
+          fi

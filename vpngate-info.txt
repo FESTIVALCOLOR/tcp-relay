@@ -1,0 +1,5 @@
+Server:  (not fetched yet)
+Country: (not fetched yet)
+IP:      (not fetched yet)
+Score:   0
+Ping:    0ms
