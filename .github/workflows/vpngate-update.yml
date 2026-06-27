@@ -68,15 +68,24 @@ jobs:
 
           raw = base64.b64decode(server["OpenVPN_ConfigData"]).decode("utf-8", errors="ignore")
 
+          # SoftEther/VPN Gate servers listen on TCP 443 — switch to TCP to bypass
+          # Timeweb's UDP VPN blocking (same issue as WireGuard: UDP sent, never received)
           filtered = []
           for line in raw.split("\n"):
               sl = line.strip().lower()
               if "redirect-gateway" in sl: continue
               if "script-security" in sl: continue
               if ("up " in sl or "down " in sl) and "resolv" in sl: continue
+              if sl.startswith("proto "): continue          # drop original proto line
+              if sl.startswith("remote ") and len(line.split()) >= 3: continue  # drop remote with port
               filtered.append(line)
 
+          server_ip = server["IP"]
           extra = [
+              "",
+              "# === Force TCP 443 (UDP blocked by Timeweb) ===",
+              "proto tcp-client",
+              f"remote {server_ip} 443",
               "",
               "# === Telegram split-tunnel (auto-generated) ===",
               "route-nopull",
