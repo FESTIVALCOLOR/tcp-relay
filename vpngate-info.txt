@@ -1,5 +1,5 @@
-Server:  (not fetched yet)
-Country: (not fetched yet)
-IP:      (not fetched yet)
-Score:   0
-Ping:    0ms
+Server:  vpn352867920
+Country: Germany
+IP:      95.91.215.158
+Score:   635301
+Ping:    13ms
