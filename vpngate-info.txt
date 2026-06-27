@@ -1,5 +1,5 @@
-Server:  vpn352867920
-Country: Germany
-IP:      95.91.215.158
-Score:   635301
-Ping:    13ms
+Server:  opengw
+Country: Romania
+IP:      217.138.212.62
+Score:   1458437
+Ping:    10ms
