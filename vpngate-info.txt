@@ -1,5 +1,5 @@
-Server:  public-vpn-257
-Country: Japan
-IP:      219.100.37.208
-Score:   2484231
-Ping:    12ms
+Server:  opengw
+Country: Romania
+IP:      217.138.212.62
+Score:   1491133
+Ping:    17ms
